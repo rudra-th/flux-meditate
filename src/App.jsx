@@ -1,14 +1,17 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, lazy, Suspense } from 'react'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import Box from '@mui/material/Box'
+import CircularProgress from '@mui/material/CircularProgress'
 import { load } from './lib/storage'
 import TabBar from './components/TabBar'
 import Timer from './pages/Timer'
-import Insights from './pages/Insights'
-import History from './pages/History'
-import Settings from './pages/Settings'
+import ErrorBoundary from './components/ErrorBoundary'
 import './App.css'
+
+const Insights = lazy(() => import('./pages/Insights'))
+const History = lazy(() => import('./pages/History'))
+const Settings = lazy(() => import('./pages/Settings'))
 
 const theme = createTheme({
   palette: {
@@ -16,7 +19,7 @@ const theme = createTheme({
     primary: { main: '#E9A84E' },
     secondary: { main: '#7EBEA5' },
     background: {
-      default: '#1A1A2E',
+      default: '#14142B',
       paper: '#1E1E32'
     },
     text: {
@@ -69,25 +72,45 @@ const theme = createTheme({
   }
 })
 
+function PageFallback() {
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', pt: 12 }}>
+      <CircularProgress size={28} sx={{ color: '#E9A84E' }} />
+    </Box>
+  )
+}
+
 export default function App() {
   const [data, setData] = useState(() => load())
   const [tab, setTab] = useState('timer')
   const refresh = useCallback(() => setData(load()), [])
 
-  const pageProps = { sessions: data.sessions, settings: data.settings, onSession: refresh }
-
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <Box className="app-shell">
-        <Box className="app-content">
-          {tab === 'timer' && <Timer {...pageProps} />}
-          {tab === 'insights' && <Insights {...pageProps} />}
-          {tab === 'history' && <History {...pageProps} />}
-          {tab === 'settings' && <Settings settings={data.settings} onChange={setData} />}
+    <ErrorBoundary>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box className="app-shell">
+          <Box className="ambient ambient-a" />
+          <Box className="ambient ambient-b" />
+          <Box className="app-content">
+            <Suspense fallback={<PageFallback />}>
+              {tab === 'timer' && (
+                <Timer sessions={data.sessions} settings={data.settings} onSession={refresh} />
+              )}
+              {tab === 'insights' && (
+                <Insights sessions={data.sessions} settings={data.settings} />
+              )}
+              {tab === 'history' && (
+                <History sessions={data.sessions} onSession={refresh} onData={setData} />
+              )}
+              {tab === 'settings' && (
+                <Settings settings={data.settings} onChange={setData} />
+              )}
+            </Suspense>
+          </Box>
+          <TabBar current={tab} onChange={setTab} />
         </Box>
-        <TabBar current={tab} onChange={setTab} />
-      </Box>
-    </ThemeProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   )
 }
