@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Dialog from '@mui/material/Dialog'
@@ -10,7 +10,7 @@ import TextField from '@mui/material/TextField'
 import VolumeUpIcon from '@mui/icons-material/VolumeUp'
 import VolumeOffIcon from '@mui/icons-material/VolumeOff'
 import { updateSettings, resetData, importData, downloadBackup } from '../lib/storage'
-import { TargetIcon, BellIcon, DownloadIcon, UploadIcon, TrashIcon } from '../components/Icons'
+import { TargetIcon, BellIcon, DownloadIcon, UploadIcon, TrashIcon, CheckIcon } from '../components/Icons'
 
 const GOAL_OPTIONS = [10, 15, 20, 30, 45, 60]
 const BELL_OPTIONS = [5, 10, 15, 20, 30]
@@ -40,6 +40,42 @@ export default function Settings({ settings, onChange }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const fileRef = useRef(null)
   const [importError, setImportError] = useState('')
+  const [installPrompt, setInstallPrompt] = useState(null)
+  const [isInstalled, setIsInstalled] = useState(
+    typeof navigator !== 'undefined' &&
+      (navigator.standalone === true ||
+        (typeof window !== 'undefined' &&
+          window.matchMedia &&
+          window.matchMedia('(display-mode: standalone)').matches))
+  )
+
+  useEffect(() => {
+    const onBeforeInstall = (e) => {
+      e.preventDefault()
+      setInstallPrompt(e)
+    }
+    const onInstalled = () => {
+      setInstallPrompt(null)
+      setIsInstalled(true)
+    }
+    const onDisplayMode = (e) => setIsInstalled(e.matches)
+    window.addEventListener('beforeinstallprompt', onBeforeInstall)
+    window.addEventListener('appinstalled', onInstalled)
+    const mq = window.matchMedia('(display-mode: standalone)')
+    if (mq.addEventListener) mq.addEventListener('change', onDisplayMode)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall)
+      window.removeEventListener('appinstalled', onInstalled)
+      if (mq.addEventListener) mq.removeEventListener('change', onDisplayMode)
+    }
+  }, [])
+
+  const handleInstall = async () => {
+    if (!installPrompt) return
+    installPrompt.prompt()
+    await installPrompt.userChoice
+    setInstallPrompt(null)
+  }
 
   const handleAddPreset = () => {
     const mins = parseInt(newPreset, 10)
@@ -242,6 +278,36 @@ export default function Settings({ settings, onChange }) {
             </svg>
           }
         />
+      </Box>
+
+      <Box className="settings-card">
+        <Box className="setting-head">
+          <Box className="setting-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="7" y="3" width="10" height="18" rx="2.5" />
+              <path d="M10.5 17.5h3" />
+            </svg>
+          </Box>
+          <Box>
+            <Typography className="settings-card-title" sx={{ mb: 0 }}>Install App</Typography>
+            <Typography className="setting-desc">Works offline, right from your home screen</Typography>
+          </Box>
+        </Box>
+        {isInstalled ? (
+          <Box className="installed-row">
+            <CheckIcon size={16} />
+            <span>Installed &mdash; fully available offline</span>
+          </Box>
+        ) : installPrompt ? (
+          <button className="custom-input-btn install-btn" onClick={handleInstall}>
+            <DownloadIcon size={18} />
+            Install Still
+          </button>
+        ) : (
+          <Typography className="setting-desc" sx={{ mt: 1.5 }}>
+            Tip: open your browser menu and choose &ldquo;Add to Home Screen&rdquo; to install.
+          </Typography>
+        )}
       </Box>
 
       <Box className="settings-card">
