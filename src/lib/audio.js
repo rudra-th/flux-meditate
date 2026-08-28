@@ -39,6 +39,22 @@ export function playBell() {
   })
 }
 
+export function playChime(volume = 0.25, freq = 880) {
+  const ac = getCtx()
+  const now = ac.currentTime
+  const osc = ac.createOscillator()
+  const gain = ac.createGain()
+  osc.type = 'sine'
+  osc.frequency.setValueAtTime(freq, now)
+  gain.gain.setValueAtTime(0, now)
+  gain.gain.linearRampToValueAtTime(volume, now + 0.015)
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.9)
+  osc.connect(gain)
+  gain.connect(ac.destination)
+  osc.start(now)
+  osc.stop(now + 1)
+}
+
 export function resumeCtx() {
   if (ctx && ctx.state === 'suspended') ctx.resume()
 }
