@@ -1,94 +1,139 @@
-export function today() {
-  return new Date().toISOString().slice(0, 10)
+export function localDayStart(ts) {
+  const d = new Date(ts)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 }
 
-export function dayStart(date = today()) {
-  return new Date(date + 'T00:00:00').getTime()
+export function dayStart() {
+  return localDayStart(Date.now())
 }
 
-export function dayEnd(date = today()) {
-  return new Date(date + 'T23:59:59').getTime()
+export function addDays(ts, days) {
+  return ts + days * 86400000
+}
+
+export function isSameDay(ts1, ts2) {
+  return localDayStart(ts1) === localDayStart(ts2)
+}
+
+export function dayKey(ts) {
+  const d = new Date(ts)
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
 }
 
 export function isToday(ts) {
-  return ts >= dayStart() && ts <= dayEnd()
+  return isSameDay(ts, Date.now())
 }
 
 export function formatDuration(secs) {
   const m = Math.floor(secs / 60)
-  const s = secs % 60
+  const s = Math.round(secs % 60)
   if (m === 0) return `${s}s`
   if (s === 0) return `${m}m`
+  if (m >= 60) {
+    const h = Math.floor(m / 60)
+    const rm = m % 60
+    return rm === 0 ? `${h}h` : `${h}h ${rm}m`
+  }
   return `${m}m ${s}s`
 }
 
+export function formatMinutes(mins) {
+  const m = Math.round(mins)
+  if (m >= 60) {
+    const h = Math.floor(m / 60)
+    const rm = m % 60
+    return rm === 0 ? `${h}h` : `${h}h ${rm}m`
+  }
+  return `${m}m`
+}
+
+export function formatClock(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
 export function formatTime(ts) {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return formatClock(ts)
 }
 
 export function formatDate(ts) {
   const d = new Date(ts)
   const now = new Date()
   const diff = now - d
-  if (diff < 60000) return 'Just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  if (diff < 172800000) return 'Yesterday'
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  if (diff < 60000 && diff >= 0) return 'Just now'
+  if (diff < 3600000 && diff >= 0) return `${Math.floor(diff / 60000)}m ago`
+  if (isSameDay(ts, Date.now())) return `Today · ${formatClock(ts)}`
+  if (diff < 86400000 && diff >= 0) return `${Math.floor(diff / 3600000)}h ago`
+  if (isSameDay(ts, Date.now() - 86400000)) return `Yesterday · ${formatClock(ts)}`
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ` · ${formatClock(ts)}`
 }
 
 export function daysBetween(ts1, ts2) {
-  const d1 = new Date(ts1)
-  const d2 = new Date(ts2)
-  const date1 = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate())
-  const date2 = new Date(d2.getFullYear(), d2.getMonth(), d2.getDate())
-  return Math.round((date2 - date1) / 86400000)
+  return Math.round((localDayStart(ts2) - localDayStart(ts1)) / 86400000)
 }
 
 export function streak(sessions) {
+  const completed = sessions
+    .filter(s => s.completed && s.duration > 0)
+    .sort((a, b) => b.timestamp - a.timestamp)
   const todayTs = dayStart()
-  const completed = sessions.filter(s => s.completed).sort((a, b) => b.timestamp - a.timestamp)
-
-  let streak = 0
-  let currentDay = todayTs
-
-  for (let i = 0; i < 365; i++) {
-    const dayTs = todayTs - i * 86400000
-    const hasSession = completed.some(s => s.timestamp >= dayTs && s.timestamp < dayTs + 86400000)
-    if (hasSession) {
-      streak++
-    } else if (i > 0) {
-      break
-    }
+  const hasToday = completed.some(s => isSameDay(s.timestamp, todayTs))
+  let cursor = hasToday ? localDayStart(todayTs) : localDayStart(todayTs - 86400000)
+  let count = 0
+  let t = cursor
+  while (true) {
+    const hit = completed.some(s => s.timestamp >= t && s.timestamp < t + 86400000)
+    if (!hit) break
+    count++
+    t -= 86400000
   }
-  return streak
+  return count
+}
+
+export function bestStreak(sessions) {
+  const days = {}
+  sessions
+    .filter(s => s.completed && s.duration > 0)
+    .forEach(s => { days[localDayStart(s.timestamp)] = true })
+  const keys = Object.keys(days).sort((a, b) => a - b).map(Number)
+  let best = 0
+  let run = 0
+  let prev = null
+  keys.forEach(k => {
+    run = prev !== null && k - prev === 86400000 ? run + 1 : 1
+    best = Math.max(best, run)
+    prev = k
+  })
+  return best
 }
 
 export function todayMinutes(sessions) {
   return sessions
-    .filter(s => s.completed && isToday(s.timestamp))
+    .filter(s => s.completed && s.duration > 0 && isToday(s.timestamp))
     .reduce((sum, s) => sum + s.duration, 0) / 60
 }
 
 export function weekData(sessions) {
   const result = []
   for (let i = 6; i >= 0; i--) {
-    const dayTs = dayStart() - i * 86400000
-    const dayEndTs = dayTs + 86400000
+    const dayTs = localDayStart(Date.now() - i * 86400000)
     const mins = sessions
-      .filter(s => s.completed && s.timestamp >= dayTs && s.timestamp < dayEndTs)
+      .filter(s => s.completed && s.duration > 0 && s.timestamp >= dayTs && s.timestamp < dayTs + 86400000)
       .reduce((sum, s) => sum + s.duration, 0) / 60
+    const d = new Date(dayTs)
     result.push({
-      date: new Date(dayTs),
-      minutes: mins,
-      label: new Date(dayTs).toLocaleDateString([], { weekday: 'short' })
+      date: dayTs,
+      minutes: Math.round(mins * 10) / 10,
+      label: d.toLocaleDateString([], { weekday: 'short' }),
+      isToday: i === 0
     })
   }
   return result
 }
 
 export function allTimeStats(sessions) {
-  const completed = sessions.filter(s => s.completed)
+  const completed = sessions.filter(s => s.completed && s.duration > 0)
   const total = completed.reduce((sum, s) => sum + s.duration, 0) / 60
   const count = completed.length
   const avg = count > 0 ? total / count : 0
