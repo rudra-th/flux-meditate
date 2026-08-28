@@ -1,12 +1,46 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import { playBell, resumeCtx } from '../lib/audio'
+import { playBell, playChime, resumeCtx } from '../lib/audio'
 import { addSession } from '../lib/storage'
-import { formatDuration } from '../lib/date'
+import { formatDuration, todayMinutes, streak } from '../lib/date'
+import { goalProgress } from '../lib/analytics'
 import Ring from '../components/Ring'
+import ProgressRing from '../components/ProgressRing'
+import SegmentedControl from '../components/SegmentedControl'
+import { PlayIcon, PauseIcon, StopIcon, TargetIcon, FlameIcon, WindIcon, CheckIcon } from '../components/Icons'
 
-export default function Timer({ settings, onSession }) {
+const BREATH_PHASES = [
+  { key: 'inhale', text: 'Breathe in', sub: 'Let the air fill you slowly', secs: 4, grow: true },
+  { key: 'hold', text: 'Hold', sub: 'Rest in the fullness', secs: 4, grow: false },
+  { key: 'exhale', text: 'Breathe out', sub: 'Release everything gently', secs: 4, grow: false },
+  { key: 'hold', text: 'Hold', sub: 'Rest in the emptiness', secs: 4, grow: false }
+]
+const BREATH_CYCLE = BREATH_PHASES.reduce((s, p) => s + p.secs, 0)
+
+export default function Timer({ sessions, settings, onSession }) {
+  const [mode, setMode] = useState('meditate')
+
+  return (
+    <Box sx={{ p: 0 }}>
+      <Box className="timer-mode-bar">
+        <SegmentedControl
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'meditate', label: 'Meditate' },
+            { value: 'breathe', label: 'Breathe' }
+          ]}
+        />
+      </Box>
+      {mode === 'meditate'
+        ? <MeditationTimer sessions={sessions} settings={settings} onSession={onSession} />
+        : <BreathTimer settings={settings} sessions={sessions} onSession={onSession} />}
+    </Box>
+  )
+}
+
+function MeditationTimer({ sessions, settings, onSession }) {
   const [duration, setDuration] = useState(settings.defaultDuration)
   const [remaining, setRemaining] = useState(settings.defaultDuration)
   const [running, setRunning] = useState(false)
@@ -17,8 +51,8 @@ export default function Timer({ settings, onSession }) {
   const intervalRef = useRef(null)
   const wakeLockRef = useRef(null)
   const pausedRemainingRef = useRef(null)
+  const lastBellRef = useRef(-1)
 
-  // Wake Lock
   const requestWakeLock = async () => {
     try {
       if ('wakeLock' in navigator) {
@@ -29,48 +63,53 @@ export default function Timer({ settings, onSession }) {
 
   const releaseWakeLock = () => {
     if (wakeLockRef.current) {
-      wakeLockRef.current.release()
+      wakeLockRef.current.release().catch(() => {})
       wakeLockRef.current = null
     }
   }
 
-  // Tick — calculates remaining from wall clock, not from counter
-  const tick = () => {
+  const tick = useCallback(() => {
     if (!endTimeRef.current) return
     const now = Date.now()
     const left = Math.max(0, Math.ceil((endTimeRef.current - now) / 1000))
     setRemaining(left)
+
+    if (settings.intervalBell > 0 && left > 0) {
+      const elapsed = duration - left
+      const interval = settings.intervalBell * 60
+      const mark = Math.floor(elapsed / interval)
+      if (mark >= 1 && mark !== lastBellRef.current && left % interval === 0) {
+        lastBellRef.current = mark
+        playChime(0.18, 660)
+      }
+    }
+
     if (left <= 0) {
       clearInterval(intervalRef.current)
       intervalRef.current = null
     }
-  }
+  }, [settings.intervalBell, duration])
 
-  // Start the interval + wake lock
   const startInterval = () => {
     clearInterval(intervalRef.current)
     intervalRef.current = setInterval(tick, 250)
     requestWakeLock()
   }
 
-  const stopInterval = () => {
+  const stopInterval = useCallback(() => {
     clearInterval(intervalRef.current)
     intervalRef.current = null
     releaseWakeLock()
-  }
+  }, [])
 
-  // Recalculate when page becomes visible again (handles throttle/pause)
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && running) {
-        tick()
-      }
+      if (document.visibilityState === 'visible' && running) tick()
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [running])
+  }, [running, tick])
 
-  // Sync default duration when not running
   useEffect(() => {
     if (!running) {
       setDuration(settings.defaultDuration)
@@ -80,28 +119,28 @@ export default function Timer({ settings, onSession }) {
     }
   }, [settings.defaultDuration])
 
-  // Completion
   useEffect(() => {
     if (remaining === 0 && running) {
       setRunning(false)
       setCompleted(true)
       stopInterval()
       if (settings.soundEnabled) playBell()
+      if (settings.hapticsEnabled && 'vibrate' in navigator) navigator.vibrate([120, 60, 120])
       addSession(duration)
       onSession()
     }
-  }, [remaining, running])
+  }, [remaining, running, settings, duration, stopInterval, onSession])
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => stopInterval()
-  }, [])
+  }, [stopInterval])
 
   const handleStart = () => {
     resumeCtx()
     setCompleted(false)
     endTimeRef.current = Date.now() + duration * 1000
     pausedRemainingRef.current = null
+    lastBellRef.current = -1
     setRunning(true)
     startInterval()
   }
@@ -116,6 +155,7 @@ export default function Timer({ settings, onSession }) {
     resumeCtx()
     const left = pausedRemainingRef.current ?? remaining
     endTimeRef.current = Date.now() + left * 1000
+    lastBellRef.current = -1
     pausedRemainingRef.current = null
     setRunning(true)
     startInterval()
@@ -152,17 +192,43 @@ export default function Timer({ settings, onSession }) {
   const progress = duration > 0 ? 1 - remaining / duration : 0
   const isActive = running || remaining < duration
 
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON') {
+        e.preventDefault()
+        if (!isActive && !completed) handleStart()
+        else if (running) handlePause()
+        else if (!running && remaining < duration && !completed) handleResume()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  const goal = goalProgress(sessions, settings.goalMinutes)
+  const todayStreak = streak(sessions)
+
   return (
     <Box className="timer-page">
-      {/* Ring */}
+      {todayStreak > 0 && (
+        <Box className="timer-streak-chip">
+          <FlameIcon size={16} />
+          <span>{todayStreak}-day streak</span>
+        </Box>
+      )}
+
       <Box className="timer-ring-container">
         <Box className="timer-ring-bg" />
         <Ring progress={progress} size={260} stroke={3} />
         <Box className="timer-display">
           {completed ? (
             <Box className="timer-complete">
-              <Box className="timer-complete-icon">✓</Box>
+              <Box className="timer-complete-icon">
+                <CheckIcon size={30} />
+              </Box>
               <Typography className="timer-complete-label">Complete</Typography>
+              <Typography className="timer-complete-sub">{formatDuration(duration)} of stillness</Typography>
+              <button className="chip active" style={{ marginTop: 6 }} onClick={handleStart}>Again</button>
             </Box>
           ) : (
             <Typography className="timer-time">{formatDuration(remaining)}</Typography>
@@ -170,36 +236,34 @@ export default function Timer({ settings, onSession }) {
         </Box>
       </Box>
 
-      {/* Controls */}
       <Box className="timer-controls">
         {!isActive && !completed && (
-          <button className="btn-primary" onClick={handleStart}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 19,12 8,19" /></svg>
+          <button className="btn-primary" onClick={handleStart} aria-label="Start meditation">
+            <PlayIcon size={30} />
           </button>
         )}
         {running && (
           <>
-            <button className="btn-secondary" onClick={handlePause}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+            <button className="btn-secondary" onClick={handlePause} aria-label="Pause">
+              <PauseIcon size={26} />
             </button>
-            <button className="btn-icon-sm" onClick={handleStop}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+            <button className="btn-icon-sm" onClick={handleStop} aria-label="Stop and reset">
+              <StopIcon size={18} />
             </button>
           </>
         )}
         {!running && remaining < duration && !completed && (
           <>
-            <button className="btn-primary" onClick={handleResume}>
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 19,12 8,19" /></svg>
+            <button className="btn-primary" onClick={handleResume} aria-label="Resume meditation">
+              <PlayIcon size={30} />
             </button>
-            <button className="btn-icon-sm" onClick={handleStop}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+            <button className="btn-icon-sm" onClick={handleStop} aria-label="Stop and reset">
+              <StopIcon size={18} />
             </button>
           </>
         )}
       </Box>
 
-      {/* Presets */}
       {!isActive && !completed && (
         <Box sx={{ width: '100%', maxWidth: 380 }}>
           <Typography className="section-label" sx={{ textAlign: 'center', mb: 1.5 }}>Duration</Typography>
@@ -209,6 +273,7 @@ export default function Timer({ settings, onSession }) {
                 key={m}
                 className={`chip${duration === m * 60 ? ' active' : ''}`}
                 onClick={() => handlePreset(m)}
+                aria-pressed={duration === m * 60}
               >
                 {m}m
               </button>
@@ -225,6 +290,7 @@ export default function Timer({ settings, onSession }) {
               onChange={e => setCustomMinutes(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleCustomSet()}
               placeholder="min"
+              aria-label="Custom duration in minutes"
             />
             <button
               className="custom-input-btn"
@@ -236,6 +302,174 @@ export default function Timer({ settings, onSession }) {
           </Box>
         </Box>
       )}
+
+      <Box className="goal-card">
+        <Box className="goal-card-left">
+          <TargetIcon size={22} />
+          <Box>
+            <Typography className="goal-card-label">Daily goal</Typography>
+            <Typography className="goal-card-value">
+              {Math.round(goal.achieved)} / {goal.goal} min
+            </Typography>
+          </Box>
+        </Box>
+        <Box className="goal-track">
+          <Box className="goal-fill" style={{ width: `${goal.capped * 100}%` }} />
+        </Box>
+        <ProgressRing progress={goal.ratio} size={44} stroke={5} color="#7EBEA5" glow={false}>
+          <Typography sx={{ fontSize: '0.62rem', fontFamily: 'JetBrains Mono, monospace', color: '#7EBEA5' }}>
+            {Math.round(goal.ratio * 100)}%
+          </Typography>
+        </ProgressRing>
+      </Box>
+    </Box>
+  )
+}
+
+function BreathTimer({ sessions, settings, onSession }) {
+  const [phase, setPhase] = useState({ idx: 0, progress: 0, phase: BREATH_PHASES[0] })
+  const [active, setActive] = useState(false)
+  const [done, setDone] = useState(false)
+  const breathStartRef = useRef(null)
+  const rafRef = useRef(null)
+  const prevIdxRef = useRef(0)
+
+  const cleanup = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+  }
+
+  const stop = useCallback(() => {
+    cleanup()
+    setActive(false)
+  }, [])
+
+  useEffect(() => {
+    return () => cleanup()
+  }, [])
+
+  const start = () => {
+    resumeCtx()
+    setDone(false)
+    breathStartRef.current = Date.now()
+    prevIdxRef.current = 0
+    setActive(true)
+  }
+
+  useEffect(() => {
+    if (!active) return
+    const startedAt = breathStartRef.current
+    const reps = 6
+    const totalSecs = BREATH_CYCLE * reps
+
+    const loop = () => {
+      const elapsed = (Date.now() - startedAt) / 1000
+      if (elapsed >= totalSecs) {
+        stop()
+        setDone(true)
+        if (settings.hapticsEnabled && 'vibrate' in navigator) navigator.vibrate([120, 60, 120])
+        const secs = Math.round(totalSecs)
+        addSession(secs)
+        onSession()
+        return
+      }
+      const cyclePos = elapsed % BREATH_CYCLE
+      let idx = 0
+      let acc = 0
+      for (let i = 0; i < BREATH_PHASES.length; i++) {
+        acc += BREATH_PHASES[i].secs
+        if (cyclePos < acc) { idx = i; break }
+        idx = i
+      }
+      const phaseStart = acc - BREATH_PHASES[idx].secs
+      const progress = Math.min(1, (cyclePos - phaseStart) / BREATH_PHASES[idx].secs)
+      setPhase({ idx, progress, phase: BREATH_PHASES[idx] })
+
+      if (idx !== prevIdxRef.current) {
+        prevIdxRef.current = idx
+        if (BREATH_PHASES[idx].key === 'inhale') {
+          if (settings.hapticsEnabled && 'vibrate' in navigator) navigator.vibrate(18)
+        } else if (BREATH_PHASES[idx].key === 'exhale') {
+          if (settings.hapticsEnabled && 'vibrate' in navigator) navigator.vibrate(10)
+        }
+      }
+      rafRef.current = requestAnimationFrame(loop)
+    }
+    rafRef.current = requestAnimationFrame(loop)
+    return () => cleanup()
+  }, [active, settings.hapticsEnabled, stop, onSession])
+
+  let scale = 0.55
+  const p = BREATH_PHASES[phase.idx]
+  if (p && p.key === 'inhale') scale = 0.55 + phase.progress * 0.45
+  else if (p && p.key === 'exhale') scale = 1 - phase.progress * 0.45
+  else if (p && p.key === 'hold') scale = phase.idx === 1 ? 1 : 0.55
+
+  const today = Math.round(todayMinutes(sessions))
+
+  return (
+    <Box className="timer-page">
+      {today > 0 && (
+        <Box className="timer-streak-chip">
+          <WindIcon size={16} />
+          <span>Box breathing · 4-4-4-4 · 6 rounds</span>
+        </Box>
+      )}
+
+      <Box className="timer-ring-container">
+        <Box className="timer-ring-bg" />
+        <Ring progress={active || done ? 1 : 0} size={260} stroke={3} paused={false} />
+        <Box className="timer-display">
+          {done ? (
+            <Box className="timer-complete">
+              <Box className="timer-complete-icon green">
+                <CheckIcon size={30} />
+              </Box>
+              <Typography className="timer-complete-label">Breathe complete</Typography>
+              <Typography className="timer-complete-sub">A full round of calm, logged</Typography>
+              <button className="chip active" style={{ marginTop: 6 }} onClick={start}>Again</button>
+            </Box>
+          ) : (
+            <>
+              <Box
+                className="breathe-orb"
+                style={{
+                  transform: `scale(${active ? scale : 0.55})`,
+                  opacity: active ? '1' : '0.35'
+                }}
+              />
+              <Typography className="breathe-text">{active ? p.text : 'Ready'}</Typography>
+              {active && <Typography className="breathe-sub">{p.sub}</Typography>}
+            </>
+          )}
+        </Box>
+      </Box>
+
+      <Box className="timer-controls">
+        {!active && !done ? (
+          <button className="btn-primary green" onClick={start} aria-label="Start breathing exercise">
+            <PlayIcon size={30} />
+          </button>
+        ) : active ? (
+          <button className="btn-secondary" onClick={stop} aria-label="Stop breathing exercise">
+            <StopIcon size={22} />
+          </button>
+        ) : (
+          <button className="btn-secondary" onClick={start} aria-label="Start breathing exercise again">
+            <PlayIcon size={22} />
+          </button>
+        )}
+      </Box>
+
+      <Box className="breathe-road">
+        {BREATH_PHASES.map((bp, i) => (
+          <Box key={i} className={`breathe-step${active && i === phase.idx ? ' current' : ''}`}>
+            <span className="breathe-step-time">{bp.secs}s</span>
+            <span className="breathe-step-name">{bp.key === 'hold' ? 'hold' : bp.key}</span>
+          </Box>
+        ))}
+        <Box className="breathe-road-fill" style={{ width: active ? `${((phase.idx) / 4) * 100 + phase.progress * 25}%` : '0%' }} />
+      </Box>
     </Box>
   )
 }
