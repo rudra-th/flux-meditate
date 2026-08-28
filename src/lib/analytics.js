@@ -275,8 +275,82 @@ export function longestStreakRange(sessions) {
   return { length: best, start: bestStart, end: bestEnd }
 }
 
-export function totalWeeks(cs) {
-  return cs
+export function trend7(sessions) {
+  const list = completed(sessions)
+  const today = dayStart()
+  const lastStart = localDayStart(today - 6 * DAY)
+  const prevStart = localDayStart(today - 13 * DAY)
+  const sumBetween = (a, b) => list
+    .filter(s => s.timestamp >= a && s.timestamp < b)
+    .reduce((acc, s) => ({ minutes: acc.minutes + s.duration / 60, sessions: acc.sessions + 1 }), { minutes: 0, sessions: 0 })
+  const last = sumBetween(lastStart, today + DAY)
+  const prev = sumBetween(prevStart, lastStart)
+  const pctOf = (a, b) => (b > 0 ? ((a - b) / b) * 100 : a > 0 ? 100 : 0)
+  return {
+    minutes: Math.round(last.minutes),
+    prevMinutes: Math.round(prev.minutes),
+    delta: { pct: Math.round(pctOf(last.minutes, prev.minutes)), up: last.minutes >= prev.minutes },
+    deltaSessions: { pct: Math.round(pctOf(last.sessions, prev.sessions)), up: last.sessions >= prev.sessions }
+  }
+}
+
+export function goalHitRate(sessions, goalMinutes) {
+  const list = completed(sessions)
+  const today = dayStart()
+  let activeDays = 0
+  let hitDays = 0
+  for (let i = 0; i < 30; i++) {
+    const dayTs = localDayStart(today - i * DAY)
+    const items = list.filter(s => s.timestamp >= dayTs && s.timestamp < dayTs + DAY)
+    if (items.length === 0) continue
+    activeDays++
+    const minutes = items.reduce((sum, s) => sum + s.duration, 0) / 60
+    if (minutes >= goalMinutes) hitDays++
+  }
+  return {
+    activeDays,
+    hitDays,
+    ratio: activeDays ? hitDays / activeDays : 0,
+    hitRate: activeDays ? Math.round((hitDays / activeDays) * 100) : 0,
+    days: 30
+  }
+}
+
+export function records(sessions) {
+  const list = completed(sessions)
+  let bestSession = null
+  list.forEach(s => {
+    if (!bestSession || s.duration > bestSession.duration) bestSession = s
+  })
+  const byDay = {}
+  list.forEach(s => {
+    const ts = localDayStart(s.timestamp)
+    byDay[ts] = (byDay[ts] || 0) + s.duration
+  })
+  let bestDayTs = null
+  let bestDayMins = 0
+  Object.keys(byDay).forEach(k => {
+    const mins = byDay[k] / 60
+    if (mins > bestDayMins) {
+      bestDayMins = mins
+      bestDayTs = Number(k)
+    }
+  })
+  return {
+    bestDay: bestDayTs
+      ? {
+          ts: bestDayTs,
+          label: new Date(bestDayTs).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }),
+          minutes: Math.round(bestDayMins)
+        }
+      : null,
+    bestSession: bestSession
+      ? {
+          minutes: Math.round(bestSession.duration / 60),
+          label: new Date(bestSession.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })
+        }
+      : null
+  }
 }
 
 export { MIN, HOUR, DAY }

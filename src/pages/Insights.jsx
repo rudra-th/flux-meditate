@@ -3,17 +3,17 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Cell, AreaChart, Area, PieChart, Pie
+  Tooltip, Cell, AreaChart, Area, PieChart, Pie, ReferenceLine
 } from 'recharts'
 import { weekData, formatMinutes } from '../lib/date'
 import {
   overview, goalProgress, dailySeries, weeklyTrend, monthCompare, timeOfDay,
   dayOfWeekAvg, durationDistribution, consistency30, milestones, weeklyNote,
-  peakHour, longestStreakRange
+  peakHour, longestStreakRange, trend7, goalHitRate, records
 } from '../lib/analytics'
 import EmptyState from '../components/EmptyState'
 import ProgressRing from '../components/ProgressRing'
-import { FlameIcon, ChartIcon, ActivityIcon, TrophyIcon, SparklesIcon, ClockIcon, ArrowUpIcon, ArrowDownIcon } from '../components/Icons'
+import { FlameIcon, ChartIcon, ActivityIcon, TrophyIcon, SparklesIcon, ClockIcon, ArrowUpIcon, ArrowDownIcon, CheckIcon, TargetIcon } from '../components/Icons'
 
 const ACCENT = '#E9A84E'
 const GREEN = '#7EBEA5'
@@ -47,7 +47,7 @@ function Delta({ delta }) {
   )
 }
 
-function StatCard({ value, label, color, icon }) {
+function StatCard({ value, label, color, icon, chip }) {
   return (
     <Box className="stat-card">
       <Box className="stat-card-top">
@@ -55,6 +55,7 @@ function StatCard({ value, label, color, icon }) {
         {icon && <Box className="stat-card-icon">{icon}</Box>}
       </Box>
       <Typography className="stat-label">{label}</Typography>
+      {chip && <Box className="stat-chip">{chip}</Box>}
     </Box>
   )
 }
@@ -74,6 +75,9 @@ export default function Insights({ sessions, settings }) {
   const note = useMemo(() => weeklyNote(sessions), [sessions])
   const peak = useMemo(() => peakHour(sessions), [sessions])
   const bestRange = useMemo(() => longestStreakRange(sessions), [sessions])
+  const t7 = useMemo(() => trend7(sessions), [sessions])
+  const goalHit = useMemo(() => goalHitRate(sessions, settings.goalMinutes), [sessions, settings.goalMinutes])
+  const rec = useMemo(() => records(sessions), [sessions])
 
   if (sessions.length === 0) {
     return (
@@ -107,10 +111,48 @@ export default function Insights({ sessions, settings }) {
       )}
 
       <Box className="stat-grid">
-        <StatCard value={Math.round(stats.todayMins)} label="Today" color="accent" icon={<ClockIcon size={18} />} />
-        <StatCard value={stats.streak} label="Streak · days" color="green" icon={<FlameIcon size={18} />} />
-        <StatCard value={formatMinutes(stats.total)} label="Total" color="accent" icon={<ChartIcon size={18} />} />
-        <StatCard value={stats.count} label="Sessions" color="green" icon={<ActivityIcon size={18} />} />
+        <StatCard
+          value={Math.round(stats.todayMins)}
+          label="Today"
+          color="accent"
+          icon={<ClockIcon size={18} />}
+          chip={
+            stats.todayMins >= settings.goalMinutes
+              ? <span className="delta delta-up"><CheckIcon size={12} />goal met</span>
+              : <span className="delta delta-flat">{Math.round(goal.goal - stats.todayMins)}m to goal</span>
+          }
+        />
+        <StatCard
+          value={stats.streak}
+          label="Streak · days"
+          color="green"
+          icon={<FlameIcon size={18} />}
+          chip={<span className="delta delta-flat">best {stats.bestStreak}</span>}
+        />
+        <StatCard
+          value={formatMinutes(stats.total)}
+          label="Total"
+          color="accent"
+          icon={<ChartIcon size={18} />}
+          chip={(
+            <Box className="stat-chip-row">
+              <Delta delta={t7.delta} />
+              <span className="stat-chip-caption">7d vs prev 7d</span>
+            </Box>
+          )}
+        />
+        <StatCard
+          value={stats.count}
+          label="Sessions"
+          color="green"
+          icon={<ActivityIcon size={18} />}
+          chip={(
+            <Box className="stat-chip-row">
+              <Delta delta={t7.deltaSessions} />
+              <span className="stat-chip-caption">7d vs prev 7d</span>
+            </Box>
+          )}
+        />
       </Box>
 
       <Box className="chart-card">
@@ -141,7 +183,13 @@ export default function Insights({ sessions, settings }) {
       </Box>
 
       <Box className="chart-card">
-        <Typography className="chart-title">This Week</Typography>
+        <Box className="chart-card-header">
+          <Box>
+            <Typography className="chart-title">This Week</Typography>
+            <Typography className="chart-sub">Minutes per day · dashed line marks your daily goal</Typography>
+          </Box>
+          <span className="delta delta-flat" style={{ whiteSpace: 'nowrap' }}>goal {settings.goalMinutes}m</span>
+        </Box>
         <Box style={{ height: 170 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={week} margin={{ top: 6, right: 4, left: -22, bottom: 0 }}>
@@ -149,6 +197,7 @@ export default function Insights({ sessions, settings }) {
               <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: MUTED, fontSize: 11, fontFamily: 'Raleway' }} />
               <YAxis axisLine={false} tickLine={false} tick={{ fill: MUTED, fontSize: 10 }} unit="m" />
               <Tooltip cursor={{ fill: 'rgba(255,255,255,0.04)' }} content={<ChartTip suffix=" min" />} />
+              <ReferenceLine y={settings.goalMinutes} stroke={GREEN} strokeDasharray="5 4" strokeOpacity={0.7} />
               <Bar dataKey="minutes" name="Minutes" radius={[6, 6, 0, 0]} maxBarSize={26}>
                 {week.map((d, i) => (
                   <Cell key={i} fill={d.minutes > 0 ? (d.isToday ? GREEN : ACCENT) : 'rgba(255,255,255,0.05)'} />
@@ -160,8 +209,38 @@ export default function Insights({ sessions, settings }) {
       </Box>
 
       <Box className="chart-card">
-        <Typography className="chart-title">Last 28 Days</Typography>
-        <Typography className="chart-sub">Minutes per day · your daily rhythm</Typography>
+        <Box className="chart-card-header">
+          <Box>
+            <Typography className="chart-title">Weekly Rhythm</Typography>
+            <Typography className="chart-sub">Total minutes across the last 12 weeks</Typography>
+          </Box>
+          <TargetIcon size={22} className="muted-icon" />
+        </Box>
+        <Box style={{ height: 150 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={weeks} margin={{ top: 6, right: 4, left: -22, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
+              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: MUTED, fontSize: 10 }} interval={1} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: MUTED, fontSize: 9 }} unit="m" />
+              <Tooltip cursor={{ fill: 'rgba(255,255,255,0.04)' }} content={<ChartTip suffix=" min / week" />} />
+              <Bar dataKey="minutes" name="Week total" radius={[6, 6, 0, 0]} maxBarSize={30}>
+                {weeks.map((d, i) => {
+                  const isLast = i === weeks.length - 1
+                  return <Cell key={i} fill={d.minutes > 0 ? (isLast ? GREEN : ACCENT) : 'rgba(255,255,255,0.05)'} />
+                })}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </Box>
+      </Box>
+
+      <Box className="chart-card">
+        <Box className="chart-card-header">
+          <Box>
+            <Typography className="chart-title">Last 28 Days</Typography>
+            <Typography className="chart-sub">Minutes per day · dashed line marks your daily goal</Typography>
+          </Box>
+        </Box>
         <Box style={{ height: 180 }}>
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={days} margin={{ top: 6, right: 4, left: -22, bottom: 0 }}>
@@ -175,10 +254,36 @@ export default function Insights({ sessions, settings }) {
               <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: MUTED, fontSize: 10 }} interval={6} />
               <YAxis axisLine={false} tickLine={false} tick={{ fill: MUTED, fontSize: 10 }} unit="m" />
               <Tooltip cursor={{ stroke: 'rgba(255,255,255,0.15)' }} content={<ChartTip suffix=" min" />} />
+              <ReferenceLine y={settings.goalMinutes} stroke={GREEN} strokeDasharray="5 4" strokeOpacity={0.7} />
               <Area type="monotone" dataKey="minutes" name="Minutes" stroke={ACCENT} strokeWidth={2}
                 fill="url(#areaGrad)" activeDot={{ r: 4, fill: ACCENT, stroke: '#1A1A2E', strokeWidth: 2 }} />
             </AreaChart>
           </ResponsiveContainer>
+        </Box>
+      </Box>
+
+      <Box className="chart-card">
+        <Box className="chart-card-header">
+          <Box>
+            <Typography className="chart-title">Goal Consistency</Typography>
+            <Typography className="chart-sub">Days you reached {settings.goalMinutes} min · last 30 days</Typography>
+          </Box>
+          <TargetIcon size={22} className="muted-icon" />
+        </Box>
+        <Box className="goal-bar-box">
+          <Box className="goal-track">
+            <Box className="goal-fill" style={{ width: `${Math.round(goalHit.ratio * 100)}%` }} />
+          </Box>
+          <Box className="goal-legend">
+            <Typography className="goal-legend-text">met goal on {goalHit.hitDays} of {goalHit.activeDays} active days · {goalHit.hitRate}%</Typography>
+            <Typography className="goal-legend-text muted">
+              {goalHit.hitRate >= 80
+                ? 'Remarkably consistent — your practice is a habit now'
+                : goalHit.hitRate >= 40
+                  ? 'A steady rhythm taking root'
+                  : 'Every active day counts — even the short sits'}
+            </Typography>
+          </Box>
         </Box>
       </Box>
 
@@ -294,7 +399,9 @@ export default function Insights({ sessions, settings }) {
             ['Best streak', bestRange.length > 0 ? `${bestRange.length} days` : '—'],
             ['Consistency · last 30 days', `${consistency}%`],
             ['Peak meditation hour', peak ? peak.label : '—'],
-            ['Longest streak span', bestRange.start ? `${new Date(bestRange.start).toLocaleDateString([], { month: 'short', day: 'numeric' })} – ${new Date(bestRange.end).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : '—']
+            ['Longest streak span', bestRange.start ? `${new Date(bestRange.start).toLocaleDateString([], { month: 'short', day: 'numeric' })} – ${new Date(bestRange.end).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : '—'],
+            ['Best day', rec.bestDay ? `${rec.bestDay.minutes} min · ${rec.bestDay.label}` : '—'],
+            ['Longest single sit', rec.bestSession ? `${rec.bestSession.minutes} min · ${rec.bestSession.label}` : '—']
           ].map(([label, value]) => (
             <Box key={label} className="list-row">
               <Typography className="list-row-label">{label}</Typography>
