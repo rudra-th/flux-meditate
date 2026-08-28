@@ -1707,3 +1707,114 @@ input[type="number"] { -moz-appearance: textfield; }
     display: none;
   }
 }
+
+/* ---- Breathing techniques ---- */
+
+.breathe-chip {
+  align-self: center;
+}
+
+.mode-picker {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 18px;
+}
+
+.mode-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow:
+    inset -2px -2px 5px var(--shadow-light),
+    inset 2px 2px 5px var(--shadow-dark);
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: all 0.2s ease;
+}
+
+.mode-chip:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.mode-chip.active {
+  color: var(--green);
+  background: var(--green-glow);
+  box-shadow:
+    -3px -3px 8px var(--shadow-light),
+    3px 3px 8px var(--shadow-dark);
+}
+
+.mode-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mode-chip.active:disabled {
+  opacity: 1;
+}
+
+.mode-chip-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.mode-chip-tag {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+
+.mode-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  max-width: 380px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(145deg, #262a44, #1e1e32);
+  color: var(--green);
+  font-size: 0.75rem;
+  line-height: 1.55;
+  box-shadow:
+    -4px -4px 10px var(--shadow-light),
+    4px 4px 10px var(--shadow-dark);
+}
+
+.mode-note span {
+  color: var(--text-secondary);
+}
+
+/* ---- Stat chips ---- */
+
+.stat-chip {
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.stat-chip-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.stat-chip-caption {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

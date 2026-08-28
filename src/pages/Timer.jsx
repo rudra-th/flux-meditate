@@ -3,20 +3,13 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { playBell, playChime, resumeCtx } from '../lib/audio'
 import { addSession } from '../lib/storage'
-import { formatDuration, todayMinutes, streak } from '../lib/date'
+import { formatDuration, streak } from '../lib/date'
 import { goalProgress } from '../lib/analytics'
+import { BREATH_MODES, patternString, cycleLength } from '../lib/breathing'
 import Ring from '../components/Ring'
 import ProgressRing from '../components/ProgressRing'
 import SegmentedControl from '../components/SegmentedControl'
-import { PlayIcon, PauseIcon, StopIcon, TargetIcon, FlameIcon, WindIcon, CheckIcon } from '../components/Icons'
-
-const BREATH_PHASES = [
-  { key: 'inhale', text: 'Breathe in', sub: 'Let the air fill you slowly', secs: 4, grow: true },
-  { key: 'hold', text: 'Hold', sub: 'Rest in the fullness', secs: 4, grow: false },
-  { key: 'exhale', text: 'Breathe out', sub: 'Release everything gently', secs: 4, grow: false },
-  { key: 'hold', text: 'Hold', sub: 'Rest in the emptiness', secs: 4, grow: false }
-]
-const BREATH_CYCLE = BREATH_PHASES.reduce((s, p) => s + p.secs, 0)
+import { PlayIcon, PauseIcon, StopIcon, TargetIcon, FlameIcon, WindIcon, CheckIcon, SparklesIcon } from '../components/Icons'
 
 export default function Timer({ sessions, settings, onSession }) {
   const [mode, setMode] = useState('meditate')
@@ -327,7 +320,11 @@ function MeditationTimer({ sessions, settings, onSession }) {
 }
 
 function BreathTimer({ sessions, settings, onSession }) {
-  const [phase, setPhase] = useState({ idx: 0, progress: 0, phase: BREATH_PHASES[0] })
+  const [modeId, setModeId] = useState('box')
+  const mode = BREATH_MODES.find(m => m.id === modeId) || BREATH_MODES[0]
+  const phases = mode.phases
+  const cycle = cycleLength(mode)
+  const [phase, setPhase] = useState({ idx: 0, progress: 0, phase: phases[0] })
   const [active, setActive] = useState(false)
   const [done, setDone] = useState(false)
   const breathStartRef = useRef(null)
@@ -356,11 +353,22 @@ function BreathTimer({ sessions, settings, onSession }) {
     setActive(true)
   }
 
+  const selectMode = (id) => {
+    if (id === modeId) return
+    cleanup()
+    const next = BREATH_MODES.find(m => m.id === id)
+    setActive(false)
+    setDone(false)
+    setModeId(id)
+    setPhase({ idx: 0, progress: 0, phase: next.phases[0] })
+  }
+
   useEffect(() => {
     if (!active) return
     const startedAt = breathStartRef.current
-    const reps = 6
-    const totalSecs = BREATH_CYCLE * reps
+    const reps = mode.rounds
+    const totalSecs = cycle * reps
+    const localPhases = mode.phases
 
     const loop = () => {
       const elapsed = (Date.now() - startedAt) / 1000
@@ -373,23 +381,23 @@ function BreathTimer({ sessions, settings, onSession }) {
         onSession()
         return
       }
-      const cyclePos = elapsed % BREATH_CYCLE
+      const cyclePos = elapsed % cycle
       let idx = 0
       let acc = 0
-      for (let i = 0; i < BREATH_PHASES.length; i++) {
-        acc += BREATH_PHASES[i].secs
+      for (let i = 0; i < localPhases.length; i++) {
+        acc += localPhases[i].secs
         if (cyclePos < acc) { idx = i; break }
         idx = i
       }
-      const phaseStart = acc - BREATH_PHASES[idx].secs
-      const progress = Math.min(1, (cyclePos - phaseStart) / BREATH_PHASES[idx].secs)
-      setPhase({ idx, progress, phase: BREATH_PHASES[idx] })
+      const phaseStart = acc - localPhases[idx].secs
+      const progress = Math.min(1, (cyclePos - phaseStart) / localPhases[idx].secs)
+      setPhase({ idx, progress, phase: localPhases[idx] })
 
       if (idx !== prevIdxRef.current) {
         prevIdxRef.current = idx
-        if (BREATH_PHASES[idx].key === 'inhale') {
+        if (localPhases[idx].key === 'inhale') {
           if (settings.hapticsEnabled && 'vibrate' in navigator) navigator.vibrate(18)
-        } else if (BREATH_PHASES[idx].key === 'exhale') {
+        } else if (localPhases[idx].key === 'exhale') {
           if (settings.hapticsEnabled && 'vibrate' in navigator) navigator.vibrate(10)
         }
       }
@@ -397,24 +405,39 @@ function BreathTimer({ sessions, settings, onSession }) {
     }
     rafRef.current = requestAnimationFrame(loop)
     return () => cleanup()
-  }, [active, settings.hapticsEnabled, stop, onSession])
+  }, [active, settings.hapticsEnabled, stop, onSession, modeId, cycle])
 
+  const p = phases[phase.idx]
   let scale = 0.55
-  const p = BREATH_PHASES[phase.idx]
   if (p && p.key === 'inhale') scale = 0.55 + phase.progress * 0.45
   else if (p && p.key === 'exhale') scale = 1 - phase.progress * 0.45
-  else if (p && p.key === 'hold') scale = phase.idx === 1 ? 1 : 0.55
+  else if (p && p.key === 'hold') scale = phase.idx > 0 && phases[phase.idx - 1].key === 'inhale' ? 1 : 0.55
 
-  const today = Math.round(todayMinutes(sessions))
+  const bodyText = active && p ? p.text : 'Ready'
+  const bodySub = active && p ? p.note : 'Choose a technique when ready'
 
   return (
     <Box className="timer-page">
-      {today > 0 && (
-        <Box className="timer-streak-chip">
-          <WindIcon size={16} />
-          <span>Box breathing · 4-4-4-4 · 6 rounds</span>
-        </Box>
-      )}
+      <Box className="timer-streak-chip breathe-chip">
+        <WindIcon size={16} />
+        <span>{mode.name} breathing · {patternString(mode)} cycle · {mode.rounds} rounds</span>
+      </Box>
+
+      <Typography className="section-label" sx={{ textAlign: 'center', mb: 1 }}>Technique</Typography>
+      <Box className="mode-picker">
+        {BREATH_MODES.map(m => (
+          <button
+            key={m.id}
+            className={`mode-chip${m.id === modeId ? ' active' : ''}`}
+            onClick={() => selectMode(m.id)}
+            disabled={active}
+            aria-pressed={m.id === modeId}
+          >
+            <span className="mode-chip-name">{m.name}</span>
+            <span className="mode-chip-tag">{m.tag}</span>
+          </button>
+        ))}
+      </Box>
 
       <Box className="timer-ring-container">
         <Box className="timer-ring-bg" />
@@ -426,7 +449,7 @@ function BreathTimer({ sessions, settings, onSession }) {
                 <CheckIcon size={30} />
               </Box>
               <Typography className="timer-complete-label">Breathe complete</Typography>
-              <Typography className="timer-complete-sub">A full round of calm, logged</Typography>
+              <Typography className="timer-complete-sub">{mode.name} · {mode.rounds} rounds, logged</Typography>
               <button className="chip active" style={{ marginTop: 6 }} onClick={start}>Again</button>
             </Box>
           ) : (
@@ -438,8 +461,8 @@ function BreathTimer({ sessions, settings, onSession }) {
                   opacity: active ? '1' : '0.35'
                 }}
               />
-              <Typography className="breathe-text">{active ? p.text : 'Ready'}</Typography>
-              {active && <Typography className="breathe-sub">{p.sub}</Typography>}
+              <Typography className="breathe-text">{bodyText}</Typography>
+              {active && <Typography className="breathe-sub">{bodySub}</Typography>}
             </>
           )}
         </Box>
@@ -462,14 +485,26 @@ function BreathTimer({ sessions, settings, onSession }) {
       </Box>
 
       <Box className="breathe-road">
-        {BREATH_PHASES.map((bp, i) => (
+        {phases.map((bp, i) => (
           <Box key={i} className={`breathe-step${active && i === phase.idx ? ' current' : ''}`}>
             <span className="breathe-step-time">{bp.secs}s</span>
-            <span className="breathe-step-name">{bp.key === 'hold' ? 'hold' : bp.key}</span>
+            <span className="breathe-step-name">{bp.key}</span>
           </Box>
         ))}
-        <Box className="breathe-road-fill" style={{ width: active ? `${((phase.idx) / 4) * 100 + phase.progress * 25}%` : '0%' }} />
+        <Box
+          className="breathe-road-fill"
+          style={{
+            width: active ? `${((phase.idx) / phases.length) * 100 + phase.progress * (100 / phases.length)}%` : '0%'
+          }}
+        />
       </Box>
+
+      {!active && !done && (
+        <Box className="mode-note">
+          <SparklesIcon size={14} />
+          <span>{mode.note}</span>
+        </Box>
+      )}
     </Box>
   )
 }
